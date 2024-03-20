@@ -8,6 +8,9 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import ru.quipy.common.utils.CoroutineRateLimiter
+import ru.quipy.common.utils.NonBlockingOngoingWindow
+import ru.quipy.common.utils.RateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -41,10 +44,13 @@ class PaymentExternalServiceImpl(
 
     private val httpClientExecutor = Executors.newSingleThreadExecutor()
 
-    private val client = OkHttpClient.Builder().run {
+    private val client = OkHttpClient.Builder().callTimeout(paymentOperationTimeout).run {
         dispatcher(Dispatcher(httpClientExecutor))
         build()
     }
+
+    private val rateLimiter = RateLimiter(rateLimitPerSec);
+    private val window = NonBlockingOngoingWindow(parallelRequests);
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
@@ -62,6 +68,9 @@ class PaymentExternalServiceImpl(
             url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId")
             post(emptyBody)
         }.build()
+
+        rateLimiter.tickBlocking()
+        window.putIntoWindow()
 
         try {
             client.newCall(request).execute().use { response ->
@@ -97,6 +106,19 @@ class PaymentExternalServiceImpl(
                 }
             }
         }
+        window.releaseWindow()
+    }
+
+    public fun getRequestAverageProcessingTime(): Duration {
+        return requestAverageProcessingTime
+    }
+
+    public fun getRateLimitPerSec(): Int {
+        return rateLimitPerSec
+    }
+
+    public fun getParallelRequests(): Int {
+        return parallelRequests
     }
 }
 
