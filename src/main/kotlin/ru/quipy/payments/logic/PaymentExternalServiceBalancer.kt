@@ -15,6 +15,7 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.annotation.PostConstruct
 
 @Service
@@ -32,25 +33,32 @@ class PaymentExternalServiceBalancer {
     @Qualifier(ExternalServicesConfig.OPTIONAL_PAYMENT_BEAN)
     private lateinit var paymentServiceOptional: PaymentService
 
-    private val paymentListener = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-listener"))
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
-    private val serversSla = ConcurrentHashMap<PaymentService, Float>()
     private val serversDuration = ConcurrentHashMap<PaymentService, ConcurrentLinkedQueue<Float>>()
     private val paymentServer = ConcurrentHashMap<UUID, PaymentService>()
 
     @PostConstruct
     fun init() {
-        serversSla[paymentServiceDefault] = 0f
-        serversSla[paymentServiceOptional] = 0f
         serversDuration[paymentServiceDefault] = ConcurrentLinkedQueue<Float>()
         serversDuration[paymentServiceOptional] = ConcurrentLinkedQueue<Float>()
+        paymentServiceDefault.setBalancer(this)
+        paymentServiceOptional.setBalancer(this)
+    }
+
+    fun isFastEnough(server: PaymentService, timePassed: Float) : Boolean {
+        return server.getAverageProcessingTime() + timePassed < 80
+        /*if (serversDuration[server]!!.size == 0) {
+            return true
+        }
+        return serversDuration[server]!!.sum() / serversDuration[server]!!.size  < server.getAverageProcessingTime()*/
     }
 
     fun paymentServerCall(paymentId: UUID, orderId: UUID, amount: Int, createdAt: Long) {
-        if (/*serversSla[paymentServiceDefault]!! < 5f*/ serversDuration[paymentServiceDefault]!!.size == 0 || serversDuration[paymentServiceDefault]!!.sum() / serversDuration[paymentServiceDefault]!!.size < 4f) {
+        val timePassed = (System.currentTimeMillis() - createdAt) / 1000f
+        if (isFastEnough(paymentServiceDefault, timePassed)) {
             paymentServer[paymentId] = paymentServiceDefault
         } else {
-            if (serversSla[paymentServiceOptional]!! < 80f) {
+            if (isFastEnough(paymentServiceOptional, timePassed)) {
                 paymentServer[paymentId] = paymentServiceOptional
             }
         }
@@ -90,39 +98,13 @@ class PaymentExternalServiceBalancer {
         }
     }
 
-    fun getPaymentInfo(paymentId: UUID, orderId: UUID, amount: Int, processedAt: Long, submittedAt: Long, success: Boolean) {
-        paymentListener.submit {
-            var duration = (processedAt - submittedAt) / 1000f
-            if (!success) {
-                duration = 80f
-            }
-            var sla = serversSla[paymentServer[paymentId]!!]!!
-            val queue = serversDuration[paymentServer[paymentId]!!]
-            if (queue!!.count() < 100) {
-                queue.add(duration)
-                sla += duration / 100f
-            } else {
-                val elem = queue.first()
-                queue.remove(elem)
-                queue.add(duration)
-                sla -= elem / 100f
-                sla += duration / 100f
-            }
-
-            if (paymentServer[paymentId]!! != paymentServiceDefault /*&& serversSla[paymentServiceDefault]!! > 5f*/) {
-                val queueOther = serversDuration[paymentServiceDefault]!!
-                val elem = queueOther.first()
-                queueOther.remove(elem)
-                serversSla[paymentServiceDefault] = serversSla[paymentServiceDefault]!! - elem / 100f
-            }
-
-            logger.info("Payment $paymentId for order $orderId succeeded.")
-            serversSla[paymentServer[paymentId]!!] = sla
-
-
-            System.out.println("")
-            System.out.println(sla)
-            System.out.println("")
-        }
+    fun getPaymentInfo(paymentId: UUID, startedAt: Long, endedAt: Long) {
+        val duration = (endedAt - startedAt) / 1000f
+        val server = paymentServer[paymentId]!!
+        val queue = serversDuration[server]
+        queue!!.add(duration)
+        Executors.newSingleThreadScheduledExecutor().schedule({
+            queue.remove(queue.first())
+        }, 5, TimeUnit.SECONDS)
     }
 }

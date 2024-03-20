@@ -8,6 +8,13 @@ interface PaymentService {
      * Submit payment request to external service.
      */
     fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long)
+
+    fun getAverageProcessingTime() : Float
+
+    fun getParallelRequests(): Int
+    fun getRateLimitPerSec(): Int
+    fun getBalancer(): PaymentExternalServiceBalancer
+    fun setBalancer(balancer: PaymentExternalServiceBalancer)
 }
 
 interface PaymentExternalService : PaymentService

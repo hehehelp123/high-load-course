@@ -2,26 +2,24 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import okhttp3.Dispatcher
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
+import okhttp3.*
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import ru.quipy.common.utils.CoroutineRateLimiter
 import ru.quipy.common.utils.NonBlockingOngoingWindow
 import ru.quipy.common.utils.RateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.io.IOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.Executors
+import kotlin.math.min
 
 
 // Advice: always treat time as a Duration
 class PaymentExternalServiceImpl(
-    private val properties: ExternalServiceProperties,
+    private val properties: ExternalServiceProperties
 ) : PaymentExternalService {
 
     companion object {
@@ -38,21 +36,21 @@ class PaymentExternalServiceImpl(
     private val requestAverageProcessingTime = properties.request95thPercentileProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+    private val speed = min(parallelRequests / requestAverageProcessingTime.seconds.toInt(), rateLimitPerSec)
 
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
-    private val httpClientExecutor = Executors.newSingleThreadExecutor()
+    private var paymentBalancer: PaymentExternalServiceBalancer? = null
 
-    private val client = OkHttpClient.Builder().callTimeout(paymentOperationTimeout).run {
-        dispatcher(Dispatcher(httpClientExecutor))
-        build()
-    }
+    private val httpClientExecutor = Executors.newSingleThreadExecutor()
 
     private val rateLimiter = RateLimiter(rateLimitPerSec);
     private val window = NonBlockingOngoingWindow(parallelRequests);
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
+        rateLimiter.tick()
+        window.putIntoWindow()
         logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
 
         val transactionId = UUID.randomUUID()
@@ -69,11 +67,33 @@ class PaymentExternalServiceImpl(
             post(emptyBody)
         }.build()
 
-        rateLimiter.tickBlocking()
-        window.putIntoWindow()
+        val startTime = now()
+        OkHttpClient.Builder().callTimeout(paymentOperationTimeout - Duration.ofMillis(now() - paymentStartedAt)).run {
+            build()
+        }.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                window.releaseWindow()
+                paymentBalancer!!.getPaymentInfo(paymentId, startTime, now())
+                when (e) {
+                    is SocketTimeoutException -> {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    }
 
-        try {
-            client.newCall(request).execute().use { response ->
+                    else -> {
+                        logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = e.message)
+                        }
+                    }
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                window.releaseWindow()
+                paymentBalancer!!.getPaymentInfo(paymentId, startTime, now())
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
@@ -82,43 +102,31 @@ class PaymentExternalServiceImpl(
                 }
 
                 logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
                 paymentESService.update(paymentId) {
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
             }
-        } catch (e: Exception) {
-            when (e) {
-                is SocketTimeoutException -> {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                    }
-                }
-
-                else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
-                }
-            }
-        }
-        window.releaseWindow()
+        })
     }
 
-    public fun getRequestAverageProcessingTime(): Duration {
-        return requestAverageProcessingTime
+    override fun getAverageProcessingTime(): Float {
+        return requestAverageProcessingTime.toMillis() / 1000f
     }
 
-    public fun getRateLimitPerSec(): Int {
+    override fun getRateLimitPerSec(): Int {
         return rateLimitPerSec
     }
 
-    public fun getParallelRequests(): Int {
+    override fun getParallelRequests(): Int {
         return parallelRequests
+    }
+
+    override fun getBalancer(): PaymentExternalServiceBalancer {
+        return paymentBalancer!!
+    }
+
+    override fun setBalancer(balancer: PaymentExternalServiceBalancer) {
+        paymentBalancer = balancer
     }
 }
 
