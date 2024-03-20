@@ -6,6 +6,7 @@ import okhttp3.*
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import ru.quipy.common.utils.NonBlockingOngoingWindow
+import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.RateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -14,6 +15,8 @@ import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeoutException
+import javax.annotation.PostConstruct
 import kotlin.math.min
 
 
@@ -44,13 +47,29 @@ class PaymentExternalServiceImpl(
     private var paymentBalancer: PaymentExternalServiceBalancer? = null
 
     private val httpClientExecutor = Executors.newSingleThreadExecutor()
+    private val dispatcher = Dispatcher(httpClientExecutor)
+    private var client = OkHttpClient.Builder().callTimeout(paymentOperationTimeout).run {
+        dispatcher(setDispatcherParameters(dispatcher))
+        build()
+    }
 
     private val rateLimiter = RateLimiter(rateLimitPerSec);
-    private val window = NonBlockingOngoingWindow(parallelRequests);
-
+    private val window = OngoingWindow(parallelRequests);
+    private fun setDispatcherParameters(dispatcher: Dispatcher): Dispatcher {
+        dispatcher.maxRequests = 10000
+        dispatcher.maxRequestsPerHost = 10000
+        return dispatcher
+    }
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
-        rateLimiter.tick()
-        window.putIntoWindow()
+        if (!window.tryAcquire()) {
+            throw Exception()
+        }
+
+        if (!rateLimiter.tick()) {
+            window.release()
+            throw Exception()
+        }
+
         logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
 
         val transactionId = UUID.randomUUID()
@@ -66,14 +85,16 @@ class PaymentExternalServiceImpl(
             url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId")
             post(emptyBody)
         }.build()
-
+        if ((Duration.ofMillis(now() - paymentStartedAt) + requestAverageProcessingTime).seconds > 80) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+            }
+            return
+        }
         val startTime = now()
-        OkHttpClient.Builder().callTimeout(paymentOperationTimeout - Duration.ofMillis(now() - paymentStartedAt)).run {
-            build()
-        }.newCall(request).enqueue(object : Callback {
+        client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                window.releaseWindow()
-                paymentBalancer!!.getPaymentInfo(paymentId, startTime, now())
+                window.release()
                 when (e) {
                     is SocketTimeoutException -> {
                         paymentESService.update(paymentId) {
@@ -92,8 +113,7 @@ class PaymentExternalServiceImpl(
             }
 
             override fun onResponse(call: Call, response: Response) {
-                window.releaseWindow()
-                paymentBalancer!!.getPaymentInfo(paymentId, startTime, now())
+                window.release()
                 val body = try {
                     mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {

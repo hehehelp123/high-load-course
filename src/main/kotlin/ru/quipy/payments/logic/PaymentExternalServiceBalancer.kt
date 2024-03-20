@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.annotation.PostConstruct
 
 @Service
@@ -34,13 +35,10 @@ class PaymentExternalServiceBalancer {
     private lateinit var paymentServiceOptional: PaymentService
 
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
-    private val serversDuration = ConcurrentHashMap<PaymentService, ConcurrentLinkedQueue<Float>>()
     private val paymentServer = ConcurrentHashMap<UUID, PaymentService>()
 
     @PostConstruct
     fun init() {
-        serversDuration[paymentServiceDefault] = ConcurrentLinkedQueue<Float>()
-        serversDuration[paymentServiceOptional] = ConcurrentLinkedQueue<Float>()
         paymentServiceDefault.setBalancer(this)
         paymentServiceOptional.setBalancer(this)
     }
@@ -56,7 +54,7 @@ class PaymentExternalServiceBalancer {
     fun paymentServerCall(paymentId: UUID, orderId: UUID, amount: Int, createdAt: Long) {
         val timePassed = (System.currentTimeMillis() - createdAt) / 1000f
         if (isFastEnough(paymentServiceDefault, timePassed)) {
-            paymentServer[paymentId] = paymentServiceDefault
+            paymentServer[paymentId] = paymentServiceOptional
         } else {
             if (isFastEnough(paymentServiceOptional, timePassed)) {
                 paymentServer[paymentId] = paymentServiceOptional
@@ -68,8 +66,12 @@ class PaymentExternalServiceBalancer {
                 paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
             } catch (e: Exception) {
                 if (paymentServer[paymentId] == paymentServiceDefault) {
-                    paymentServer[paymentId] = paymentServiceOptional
-                    paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
+                    if (isFastEnough(paymentServiceOptional, timePassed)) {
+                        paymentServer[paymentId] = paymentServiceOptional
+                        paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
+                    } else {
+                        paymentServer.remove(paymentId)
+                    }
                 }
             }
         } else {
@@ -96,15 +98,5 @@ class PaymentExternalServiceBalancer {
             logger.info("Payment ${createdEvent.paymentId} for order $orderId created.")
             paymentServerCall(paymentId, orderId, amount, createdAt)
         }
-    }
-
-    fun getPaymentInfo(paymentId: UUID, startedAt: Long, endedAt: Long) {
-        val duration = (endedAt - startedAt) / 1000f
-        val server = paymentServer[paymentId]!!
-        val queue = serversDuration[server]
-        queue!!.add(duration)
-        Executors.newSingleThreadScheduledExecutor().schedule({
-            queue.remove(queue.first())
-        }, 5, TimeUnit.SECONDS)
     }
 }
