@@ -3,6 +3,7 @@ package ru.quipy.payments.config
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.payments.logic.ExternalServiceProperties
+import ru.quipy.payments.logic.PaymentExternalService
 import ru.quipy.payments.logic.PaymentExternalServiceImpl
 import java.time.Duration
 
@@ -11,7 +12,8 @@ import java.time.Duration
 class ExternalServicesConfig {
     companion object {
         const val PRIMARY_PAYMENT_BEAN = "PRIMARY_PAYMENT_BEAN"
-        const val OPTIONAL_PAYMENT_BEAN = "OPTIONAL_PAYMENT_BEAN"
+        const val SECONDARY_PAYMENT_BEAN = "SECONDARY_PAYMENT_BEAN"
+        const val TERTIARY_PAYMENT_BEAN = "TERTIARY_PAYMENT_BEAN"
 
         // Ниже приведены готовые конфигурации нескольких аккаунтов провайдера оплаты.
         // Заметьте, что каждый аккаунт обладает своими характеристиками и стоимостью вызова.
@@ -54,14 +56,20 @@ class ExternalServicesConfig {
     }
 
     @Bean(PRIMARY_PAYMENT_BEAN)
-    fun slowExternalService() =
+    fun primaryExternalService() =
         PaymentExternalServiceImpl(
-            accountProps_2
+            accountProps_4
         )
 
-    @Bean(OPTIONAL_PAYMENT_BEAN)
-    fun fastExternalService() =
+    @Bean(SECONDARY_PAYMENT_BEAN)
+    fun secondaryExternalService() =
         PaymentExternalServiceImpl(
-            accountProps_1
+            accountProps_3
+        )
+
+    @Bean(TERTIARY_PAYMENT_BEAN)
+    fun tertiaryExternalService() =
+        PaymentExternalServiceImpl(
+            accountProps_2
         )
 }

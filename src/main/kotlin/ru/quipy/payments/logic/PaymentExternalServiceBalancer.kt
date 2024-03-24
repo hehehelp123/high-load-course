@@ -28,36 +28,39 @@ class PaymentExternalServiceBalancer {
 
     @Autowired
     @Qualifier(ExternalServicesConfig.PRIMARY_PAYMENT_BEAN)
-    private lateinit var paymentServiceDefault: PaymentService
+    private lateinit var paymentServicePrimary: PaymentService
 
     @Autowired
-    @Qualifier(ExternalServicesConfig.OPTIONAL_PAYMENT_BEAN)
-    private lateinit var paymentServiceOptional: PaymentService
+    @Qualifier(ExternalServicesConfig.SECONDARY_PAYMENT_BEAN)
+    private lateinit var paymentServiceSecondary: PaymentService
+
+    @Autowired
+    @Qualifier(ExternalServicesConfig.TERTIARY_PAYMENT_BEAN)
+    private lateinit var paymentServiceTertiary: PaymentService
 
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
     private val paymentServer = ConcurrentHashMap<UUID, PaymentService>()
 
     @PostConstruct
     fun init() {
-        paymentServiceDefault.setBalancer(this)
-        paymentServiceOptional.setBalancer(this)
+        paymentServicePrimary.setBalancer(this)
+        paymentServiceSecondary.setBalancer(this)
+        paymentServiceTertiary.setBalancer(this)
     }
 
     fun isFastEnough(server: PaymentService, timePassed: Float) : Boolean {
         return server.getAverageProcessingTime() + timePassed < 80
-        /*if (serversDuration[server]!!.size == 0) {
-            return true
-        }
-        return serversDuration[server]!!.sum() / serversDuration[server]!!.size  < server.getAverageProcessingTime()*/
     }
 
     fun paymentServerCall(paymentId: UUID, orderId: UUID, amount: Int, createdAt: Long) {
         val timePassed = (System.currentTimeMillis() - createdAt) / 1000f
-        if (isFastEnough(paymentServiceDefault, timePassed)) {
-            paymentServer[paymentId] = paymentServiceOptional
-        } else {
-            if (isFastEnough(paymentServiceOptional, timePassed)) {
-                paymentServer[paymentId] = paymentServiceOptional
+
+        val servicesList = listOf(paymentServicePrimary, paymentServiceSecondary, paymentServiceTertiary)
+
+        for(service in servicesList) {
+            if(isFastEnough(service, timePassed)) {
+                paymentServer[paymentId] = service
+                break
             }
         }
 
@@ -65,13 +68,14 @@ class PaymentExternalServiceBalancer {
             try {
                 paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
             } catch (e: Exception) {
-                if (paymentServer[paymentId] == paymentServiceDefault) {
-                    if (isFastEnough(paymentServiceOptional, timePassed)) {
-                        paymentServer[paymentId] = paymentServiceOptional
-                        paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
-                    } else {
-                        paymentServer.remove(paymentId)
-                    }
+                val serviceIndex = servicesList.indexOf(paymentServer[paymentId])
+                val nextServiceIndex = serviceIndex + 1
+
+                if(serviceIndex + 1 <= servicesList.size) {
+                    paymentServer[paymentId] = servicesList[nextServiceIndex]
+                    paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
+                } else {
+                    paymentServer.remove(paymentId)
                 }
             }
         } else {
