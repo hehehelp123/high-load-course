@@ -14,6 +14,7 @@ class ExternalServicesConfig {
         const val PRIMARY_PAYMENT_BEAN = "PRIMARY_PAYMENT_BEAN"
         const val SECONDARY_PAYMENT_BEAN = "SECONDARY_PAYMENT_BEAN"
         const val TERTIARY_PAYMENT_BEAN = "TERTIARY_PAYMENT_BEAN"
+        const val FOURTH_PAYMENT_BEAN = "FOURTH_PAYMENT_BEAN"
 
         // Ниже приведены готовые конфигурации нескольких аккаунтов провайдера оплаты.
         // Заметьте, что каждый аккаунт обладает своими характеристиками и стоимостью вызова.
@@ -71,5 +72,11 @@ class ExternalServicesConfig {
     fun tertiaryExternalService() =
         PaymentExternalServiceImpl(
             accountProps_2
+        )
+
+    @Bean(FOURTH_PAYMENT_BEAN)
+    fun fourthExternalService() =
+        PaymentExternalServiceImpl(
+                accountProps_1
         )
 }

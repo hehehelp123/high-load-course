@@ -15,6 +15,11 @@ interface PaymentService {
     fun getRateLimitPerSec(): Int
     fun getBalancer(): PaymentExternalServiceBalancer
     fun setBalancer(balancer: PaymentExternalServiceBalancer)
+    fun processPayments()
+    fun runProcesses()
+    fun addToQueue(task: Runnable)
+    fun getQueueSize(): Int
+    fun getSpeed(): Float
 }
 
 interface PaymentExternalService : PaymentService

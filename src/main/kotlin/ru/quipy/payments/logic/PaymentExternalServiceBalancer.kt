@@ -38,47 +38,41 @@ class PaymentExternalServiceBalancer {
     @Qualifier(ExternalServicesConfig.TERTIARY_PAYMENT_BEAN)
     private lateinit var paymentServiceTertiary: PaymentService
 
+    @Autowired
+    @Qualifier(ExternalServicesConfig.FOURTH_PAYMENT_BEAN)
+    private lateinit var paymentServiceFourth: PaymentService
+
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
-    private val paymentServer = ConcurrentHashMap<UUID, PaymentService>()
+
+    val services: List<PaymentService>
+        get() = listOf(paymentServicePrimary, paymentServiceSecondary, paymentServiceTertiary)
 
     @PostConstruct
     fun init() {
-        paymentServicePrimary.setBalancer(this)
-        paymentServiceSecondary.setBalancer(this)
-        paymentServiceTertiary.setBalancer(this)
+        services.forEach { service ->
+            service.runProcesses()
+        }
     }
 
     fun isFastEnough(server: PaymentService, timePassed: Float) : Boolean {
-        return server.getAverageProcessingTime() + timePassed < 80
+        return (server.getQueueSize() + 1) / server.getSpeed() + timePassed < 80
     }
 
     fun paymentServerCall(paymentId: UUID, orderId: UUID, amount: Int, createdAt: Long) {
         val timePassed = (System.currentTimeMillis() - createdAt) / 1000f
 
-        val servicesList = listOf(paymentServicePrimary, paymentServiceSecondary, paymentServiceTertiary)
-
-        for(service in servicesList) {
+        var isSubmitted = false
+        for(service in services) {
             if(isFastEnough(service, timePassed)) {
-                paymentServer[paymentId] = service
+                service.addToQueue(Runnable {
+                    service.submitPaymentRequest(paymentId, amount, createdAt)
+                })
+                isSubmitted = true
                 break
             }
         }
 
-        if (paymentServer.containsKey(paymentId)) {
-            try {
-                paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
-            } catch (e: Exception) {
-                val serviceIndex = servicesList.indexOf(paymentServer[paymentId])
-                val nextServiceIndex = serviceIndex + 1
-
-                if(serviceIndex + 1 <= servicesList.size) {
-                    paymentServer[paymentId] = servicesList[nextServiceIndex]
-                    paymentServer[paymentId]!!.submitPaymentRequest(paymentId, amount, createdAt)
-                } else {
-                    paymentServer.remove(paymentId)
-                }
-            }
-        } else {
+        if(!isSubmitted) {
             val transactionId = UUID.randomUUID()
             paymentESService.update(paymentId) {
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - createdAt))

@@ -15,7 +15,9 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.BlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeoutException
 import javax.annotation.PostConstruct
 import kotlin.math.min
@@ -30,8 +32,8 @@ class PaymentExternalServiceImpl(
         val logger = LoggerFactory.getLogger(PaymentExternalServiceImpl::class.java)
 
         val paymentOperationTimeout = Duration.ofSeconds(80)
-        val protocols = listOf(Protocol.HTTP_2)
-        val dispatcher = Dispatcher(Executors.newSingleThreadExecutor()).apply {
+        val protocols = listOf(Protocol.H2_PRIOR_KNOWLEDGE)
+        val dispatcher = Dispatcher(Executors.newFixedThreadPool(80)).apply {
             maxRequests = 10000
             maxRequestsPerHost = 10000
         }
@@ -45,14 +47,18 @@ class PaymentExternalServiceImpl(
     private val requestAverageProcessingTime = properties.request95thPercentileProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
-    private val speed = min(parallelRequests / requestAverageProcessingTime.seconds.toInt(), rateLimitPerSec)
+    private val speed = min(parallelRequests.toFloat() / requestAverageProcessingTime.seconds.toFloat(), rateLimitPerSec.toFloat())
 
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
     private var paymentBalancer: PaymentExternalServiceBalancer? = null
 
-    private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
+    private val paymentsQueue: BlockingQueue<Runnable> = LinkedBlockingQueue()
+
+    private val paymentsProcessExecutor = Executors.newFixedThreadPool(5)
+    private val paymentsResultExecutor = Executors.newFixedThreadPool(5)
+    private val paymentsRunnerExecutor = Executors.newFixedThreadPool(5)
 
     private var client = OkHttpClient.Builder()
             .callTimeout(paymentOperationTimeout)
@@ -68,15 +74,6 @@ class PaymentExternalServiceImpl(
         return dispatcher
     }
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
-        if (!window.tryAcquire()) {
-            throw Exception()
-        }
-
-        if (!rateLimiter.tick()) {
-            window.release()
-            throw Exception()
-        }
-
         logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
 
         val transactionId = UUID.randomUUID()
@@ -101,8 +98,9 @@ class PaymentExternalServiceImpl(
         val startTime = now()
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                paymentExecutor.submit {
-                    window.release()
+                window.release()
+
+                paymentsResultExecutor.submit {
                     when (e) {
                         is SocketTimeoutException -> {
                             paymentESService.update(paymentId) {
@@ -119,11 +117,13 @@ class PaymentExternalServiceImpl(
                         }
                     }
                 }
+
             }
 
             override fun onResponse(call: Call, response: Response) {
-                paymentExecutor.submit {
-                    window.release()
+                window.release()
+
+                paymentsResultExecutor.submit {
                     val body = try {
                         mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
                     } catch (e: Exception) {
@@ -158,6 +158,34 @@ class PaymentExternalServiceImpl(
 
     override fun setBalancer(balancer: PaymentExternalServiceBalancer) {
         paymentBalancer = balancer
+    }
+
+    override fun processPayments() {
+        while (true) {
+            window.acquire()
+            rateLimiter.tickBlocking()
+
+            val task = paymentsQueue.take()
+            paymentsProcessExecutor.execute(task)
+        }
+    }
+
+    override fun runProcesses() {
+        paymentsRunnerExecutor.submit {
+            processPayments()
+        }
+    }
+
+    override fun addToQueue(task: Runnable) {
+        paymentsQueue.put(task)
+    }
+
+    override fun getQueueSize(): Int {
+        return paymentsQueue.size
+    }
+
+    override fun getSpeed(): Float {
+        return speed
     }
 }
 
