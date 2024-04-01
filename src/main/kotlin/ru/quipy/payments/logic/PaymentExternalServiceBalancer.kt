@@ -65,7 +65,11 @@ class PaymentExternalServiceBalancer {
         for(service in services) {
             if(isFastEnough(service, timePassed)) {
                 service.addToQueue(Runnable {
-                    service.submitPaymentRequest(paymentId, amount, createdAt)
+                    try {
+                        service.submitPaymentRequest(paymentId, amount, createdAt)
+                    } catch (e: Exception) {
+                        logger.error("Произошла ошибка при отправке запроса на оплату", e)
+                    }
                 })
                 isSubmitted = true
                 break

@@ -30,10 +30,11 @@ class PaymentExternalServiceImpl(
 
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalServiceImpl::class.java)
-
+        //private val paymentsProcessDispatcher = Executors.newFixedThreadPool(80)
+        private val paymentsProcessDispatcher = Executors.newFixedThreadPool(80, NamedThreadFactory("payment-process-dispatcher"))
         val paymentOperationTimeout = Duration.ofSeconds(80)
         val protocols = listOf(Protocol.H2_PRIOR_KNOWLEDGE)
-        val dispatcher = Dispatcher(Executors.newFixedThreadPool(80)).apply {
+        val dispatcher = Dispatcher(paymentsProcessDispatcher).apply {
             maxRequests = 10000
             maxRequestsPerHost = 10000
         }
@@ -54,11 +55,14 @@ class PaymentExternalServiceImpl(
 
     private var paymentBalancer: PaymentExternalServiceBalancer? = null
 
-    private val paymentsQueue: BlockingQueue<Runnable> = LinkedBlockingQueue()
+    private val paymentsQueue: BlockingQueue<Runnable> = LinkedBlockingQueue((80*speed).toInt()+1)
 
-    private val paymentsProcessExecutor = Executors.newFixedThreadPool(5)
-    private val paymentsResultExecutor = Executors.newFixedThreadPool(5)
-    private val paymentsRunnerExecutor = Executors.newFixedThreadPool(5)
+    private val paymentsProcessExecutor = Executors.newFixedThreadPool(5, NamedThreadFactory("payment-process-executor"))
+    private val paymentsResultExecutor = Executors.newFixedThreadPool(5, NamedThreadFactory("payment-result-executor"))
+    private val paymentsRunnerExecutor = Executors.newFixedThreadPool(5, NamedThreadFactory("payment-runner-executor"))
+    //private val paymentsProcessExecutor = Executors.newFixedThreadPool(5)
+    //private val paymentsResultExecutor = Executors.newFixedThreadPool(5)
+    //private val paymentsRunnerExecutor = Executors.newFixedThreadPool(5)
 
     private var client = OkHttpClient.Builder()
             .callTimeout(paymentOperationTimeout)
