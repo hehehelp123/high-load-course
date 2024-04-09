@@ -14,7 +14,9 @@ class ExternalServicesConfig {
         const val PRIMARY_PAYMENT_BEAN = "PRIMARY_PAYMENT_BEAN"
         const val SECONDARY_PAYMENT_BEAN = "SECONDARY_PAYMENT_BEAN"
         const val TERTIARY_PAYMENT_BEAN = "TERTIARY_PAYMENT_BEAN"
-        const val FOURTH_PAYMENT_BEAN = "FOURTH_PAYMENT_BEAN"
+//        const val FOURTH_PAYMENT_BEAN = "FOURTH_PAYMENT_BEAN"
+//        const val FIFTH_PAYMENT_BEAN = "FIFTH_PAYMENT_BEAN"
+
 
         // Ниже приведены готовые конфигурации нескольких аккаунтов провайдера оплаты.
         // Заметьте, что каждый аккаунт обладает своими характеристиками и стоимостью вызова.
@@ -47,20 +49,35 @@ class ExternalServicesConfig {
         )
 
         // Call costs 30
-        private val accountProps_4 = ExternalServiceProperties(
-            "test",
-            "default-4",
-            parallelRequests = 8,
-            rateLimitPerSec = 5,
-            request95thPercentileProcessingTime = Duration.ofMillis(10_000),
-        )
+//        private val accountProps_4 = ExternalServiceProperties(
+//            "test",
+//            "default-42",
+//            parallelRequests = 8,
+//            rateLimitPerSec = 5,
+//            request95thPercentileProcessingTime = Duration.ofMillis(10_000),
+//        )
+//
+//        private val accountProps_5 = ExternalServiceProperties(
+//            // Call costs 40
+//            "test",
+//            "default-5",
+//            parallelRequests = 8,
+//            rateLimitPerSec = 5,
+//            request95thPercentileProcessingTime = Duration.ofMillis(10_000),
+//        )
     }
 
-    @Bean(PRIMARY_PAYMENT_BEAN)
-    fun primaryExternalService() =
-        PaymentExternalServiceImpl(
-            accountProps_4
-        )
+//    @Bean(FIFTH_PAYMENT_BEAN)
+//    fun fiftharyExternalService() =
+//        PaymentExternalServiceImpl(
+//            accountProps_5
+//        )
+
+//    @Bean(FOURTH_PAYMENT_BEAN)
+//    fun primaryExternalService() =
+//        PaymentExternalServiceImpl(
+//            accountProps_4
+//        )
 
     @Bean(SECONDARY_PAYMENT_BEAN)
     fun secondaryExternalService() =
@@ -74,7 +91,7 @@ class ExternalServicesConfig {
             accountProps_2
         )
 
-    @Bean(FOURTH_PAYMENT_BEAN)
+    @Bean(PRIMARY_PAYMENT_BEAN)
     fun fourthExternalService() =
         PaymentExternalServiceImpl(
                 accountProps_1

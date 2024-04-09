@@ -1,5 +1,6 @@
 package ru.quipy.apigateway
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -67,6 +68,8 @@ class APIController {
 
     data class User(val id: UUID, val name: String)
 
+
+    @CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID): Order {
         val event = ordersESService.create { it.create(UUID.randomUUID(), userId) }
@@ -212,14 +215,20 @@ class APIController {
         }
     }
 
+    @CircuitBreaker(name = "confirmPayment", fallbackMethod = "pendingAuthorizedPaymentIntegration")
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID): PaymentSubmissionDto {
+        println("payordfer1111111111111111111")
         val paymentCreated = ordersESService.update(orderId) {
             it.startPayment()
         }.also {
             orderCache.invalidateOrderState(orderId)
         }
         return PaymentSubmissionDto(paymentCreated.createdAt, paymentCreated.paymentId)
+    }
+
+    fun pendingAuthorizedPaymentIntegration(id: Long, throwable: Throwable) {
+        println("ahaahahah")
     }
 
     class PaymentSubmissionDto(

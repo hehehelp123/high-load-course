@@ -15,31 +15,50 @@
     <name>OnlineShop</name>
     <description>Application for resilience and highly-loaded applications course</description>
 
-	<properties>
+    <properties>
         <kotlin.version>1.9.0</kotlin.version>
         <tiny.es.version>2.5.0</tiny.es.version>
-        <resilience4jVersion>2.2.0</resilience4jVersion>
+<!--        <resilience4jVersion>2.0.1</resilience4jVersion>-->
     </properties>
 
-	<dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-mongodb</artifactId>
-        </dependency>
+    <dependencies>
         <dependency>
             <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-ratelimiter</artifactId>
-            <version>${resilience4jVersion}</version>
+            <artifactId>resilience4j-spring-boot2</artifactId>
+            <version>2.0.1</version>
         </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-coroutines-reactor</artifactId>
+            <version>1.8.0</version>
+            <scope>runtime</scope>
+        </dependency>
+
+
+
+        <!--        <dependency>-->
+<!--            <groupId>org.springframework.boot</groupId>-->
+<!--            <artifactId>spring-boot-starter-data-mongodb</artifactId>-->
+<!--        </dependency>-->
+<!--        <dependency>-->
+<!--            <groupId>io.github.resilience4j</groupId>-->
+<!--            <artifactId>resilience4j-ratelimiter</artifactId>-->
+<!--            <version>${resilience4jVersion}</version>-->
+<!--        </dependency>-->
         <dependency>
             <groupId>org.jetbrains.kotlinx</groupId>
             <artifactId>kotlinx-coroutines-core</artifactId>
             <version>1.7.3</version>
         </dependency>
-        <dependency>
-            <groupId>org.jetbrains.kotlinx</groupId>
-            <artifactId>kotlinx-coroutines-reactor</artifactId>
-        </dependency>
+        <!--        <dependency>-->
+        <!--            <groupId>org.jetbrains.kotlinx</groupId>-->
+        <!--            <artifactId>kotlinx-coroutines-reactor</artifactId>-->
+        <!--        </dependency>-->
+<!--        <dependency>-->
+<!--            <groupId>org.jetbrains.kotlinx</groupId>-->
+<!--            <artifactId>kotlinx-coroutines-reactor</artifactId>-->
+<!--            <version>1.7.3</version> &lt;!&ndash; Specify the version here &ndash;&gt;-->
+<!--        </dependency>-->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
@@ -89,6 +108,28 @@
             <artifactId>tiny-mongo-event-store-spring-boot-starter</artifactId>
             <version>${tiny.es.version}</version>
         </dependency>
+
+        <!-- Зависимости для Circuit Breaker Pattern -->
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.cloud</groupId>-->
+<!--            <artifactId>spring-cloud-starter-circuitbreaker-reactor-resilience4j</artifactId>-->
+<!--&lt;!&ndash;            <version>2.1.0</version>&ndash;&gt;-->
+<!--        </dependency>-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+        <!-- Зависимости для тестирования -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -120,5 +161,4 @@
             </plugin>
         </plugins>
     </build>
-
 </project>

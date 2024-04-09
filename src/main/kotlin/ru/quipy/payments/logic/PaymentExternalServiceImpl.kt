@@ -21,7 +21,12 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeoutException
 import javax.annotation.PostConstruct
 import kotlin.math.min
-
+//import io.github.resilience4j.circuitbreaker.CircuitBreaker
+//import io.github.resilience4j.circuitbreaker.CircuitBreakerOpenException
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
+//import io.github.resilience4j.circuitbreaker.CircuitBreakerOpenException
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker
 
 // Advice: always treat time as a Duration
 class PaymentExternalServiceImpl(
@@ -70,6 +75,8 @@ class PaymentExternalServiceImpl(
             .dispatcher(dispatcher)
             .build()
 
+
+//    private val circuitBreaker = CircuitBreaker(failureThreshold = 5, recoveryTimeout = Duration.ofMinutes(1))
     private val rateLimiter = RateLimiter(rateLimitPerSec);
     private val window = OngoingWindow(parallelRequests);
     private fun setDispatcherParameters(dispatcher: Dispatcher): Dispatcher {
@@ -77,7 +84,12 @@ class PaymentExternalServiceImpl(
         dispatcher.maxRequestsPerHost = 10000
         return dispatcher
     }
+    @CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {
+//        if (circuitBreaker.isCircuitOpen()) {
+//            logger.warn("Circuit is open. Skipping payment request submission.")
+//            return
+//        }
         logger.warn("[$accountName] Submitting payment request for payment $paymentId. Already passed: ${now() - paymentStartedAt} ms")
 
         val transactionId = UUID.randomUUID()
@@ -102,6 +114,7 @@ class PaymentExternalServiceImpl(
         val startTime = now()
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
+//                circuitBreaker.recordFailure() // Записываем сбой
                 window.release()
 
                 paymentsResultExecutor.submit {
@@ -121,10 +134,11 @@ class PaymentExternalServiceImpl(
                         }
                     }
                 }
-
             }
 
+
             override fun onResponse(call: Call, response: Response) {
+//                circuitBreaker.recordSuccess()
                 window.release()
 
                 paymentsResultExecutor.submit {
@@ -164,6 +178,7 @@ class PaymentExternalServiceImpl(
         paymentBalancer = balancer
     }
 
+    @CircuitBreaker(name = "confirmPayment", fallbackMethod = "pendingAuthorizedPaymentIntegration")
     override fun processPayments() {
         while (true) {
             window.acquire()
@@ -171,7 +186,19 @@ class PaymentExternalServiceImpl(
 
             val task = paymentsQueue.take()
             paymentsProcessExecutor.execute(task)
+//            try {
+//                circuitBreaker.execute {
+//                    paymentsProcessExecutor.execute(task)
+//                }
+//            } catch (e: CircuitBreakerOpenException) {
+//                // Если цепь открыта, то пропускаем обработку текущей задачи
+//                logger.warn("Circuit breaker is open. Skipping processing of payment task.")
+//            }
         }
+    }
+
+    fun pendingAuthorizedPaymentIntegration(id: Long, throwable: Throwable) {
+        println("ahaahahah")
     }
 
     override fun runProcesses() {

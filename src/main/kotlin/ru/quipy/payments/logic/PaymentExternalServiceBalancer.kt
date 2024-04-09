@@ -38,11 +38,16 @@ class PaymentExternalServiceBalancer {
     @Qualifier(ExternalServicesConfig.TERTIARY_PAYMENT_BEAN)
     private lateinit var paymentServiceTertiary: PaymentService
 
-    @Autowired
-    @Qualifier(ExternalServicesConfig.FOURTH_PAYMENT_BEAN)
-    private lateinit var paymentServiceFourth: PaymentService
+//    @Autowired
+//    @Qualifier(ExternalServicesConfig.FOURTH_PAYMENT_BEAN)
+//    private lateinit var paymentServiceFourth: PaymentService
+//
+//    @Autowired
+//    @Qualifier(ExternalServicesConfig.FIFTH_PAYMENT_BEAN)
+//    private lateinit var paymentServiceFifth: PaymentService
 
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
+    private val circuitBreaker = CircuitBreaker(failureThreshold = 5, recoveryTimeout = Duration.ofMinutes(1))
 
     val services: List<PaymentService>
         get() = listOf(paymentServicePrimary, paymentServiceSecondary, paymentServiceTertiary)
@@ -62,8 +67,8 @@ class PaymentExternalServiceBalancer {
         val timePassed = (System.currentTimeMillis() - createdAt) / 1000f
 
         var isSubmitted = false
-        for(service in services) {
-            if(isFastEnough(service, timePassed)) {
+        for (service in services) {
+            if (isFastEnough(service, timePassed)) {
                 service.addToQueue(Runnable {
                     try {
                         service.submitPaymentRequest(paymentId, amount, createdAt)
@@ -76,7 +81,7 @@ class PaymentExternalServiceBalancer {
             }
         }
 
-        if(!isSubmitted) {
+        if (!isSubmitted) {
             val transactionId = UUID.randomUUID()
             paymentESService.update(paymentId) {
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - createdAt))
@@ -100,5 +105,34 @@ class PaymentExternalServiceBalancer {
             logger.info("Payment ${createdEvent.paymentId} for order $orderId created.")
             paymentServerCall(paymentId, orderId, amount, createdAt)
         }
+    }
+}
+class CircuitBreaker(private val failureThreshold: Int, private val recoveryTimeout: Duration) {
+    private var failureCount = 0
+    private var lastFailureTimestamp: Long = 0
+
+    fun recordSuccess() {
+        reset()
+    }
+
+    fun recordFailure() {
+        if (isRecoveryTimeoutExpired()) {
+            reset()
+        }
+        failureCount++
+        lastFailureTimestamp = System.currentTimeMillis()
+    }
+
+    fun isCircuitOpen(): Boolean {
+        return failureCount >= failureThreshold && isRecoveryTimeoutExpired()
+    }
+
+    private fun reset() {
+        failureCount = 0
+        lastFailureTimestamp = 0
+    }
+
+    private fun isRecoveryTimeoutExpired(): Boolean {
+        return System.currentTimeMillis() - lastFailureTimestamp >= recoveryTimeout.toMillis()
     }
 }

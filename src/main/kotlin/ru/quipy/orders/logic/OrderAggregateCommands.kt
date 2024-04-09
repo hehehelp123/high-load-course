@@ -1,9 +1,12 @@
 package ru.quipy.orders.logic
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker
 import ru.quipy.domain.Event
 import ru.quipy.orders.api.*
 import java.util.*
 
+
+@CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
 
 fun OrderAggregateState.create(id: UUID, userId: UUID): OrderCreatedEvent {
     return OrderCreatedEvent(
@@ -11,6 +14,8 @@ fun OrderAggregateState.create(id: UUID, userId: UUID): OrderCreatedEvent {
         userId = userId,
     )
 }
+
+@CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
 
 fun OrderAggregateState.addItem(productId: UUID, amount: Int): List<Event<OrderAggregate>> {
     val itemAddedEvent = ItemAddedEvent(
@@ -28,6 +33,8 @@ fun OrderAggregateState.addItem(productId: UUID, amount: Int): List<Event<OrderA
 
 }
 
+@CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
+
 fun OrderAggregateState.checkout(): OrderCheckoutStartedEvent {
     if (status != OrderStatus.COLLECTING)
         error("Cannot start checkout for order ${getId()}, status is $status")
@@ -38,6 +45,8 @@ fun OrderAggregateState.checkout(): OrderCheckoutStartedEvent {
         items = this.shoppingCart.items
     )
 }
+
+@CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
 
 fun OrderAggregateState.setBookingResults(bookingId: UUID, success: Boolean, totalPrice: Int? = null): OrderBookingResultSetEvent {
     if (status != OrderStatus.BOOKING_IN_PROGRESS)
@@ -51,6 +60,7 @@ fun OrderAggregateState.setBookingResults(bookingId: UUID, success: Boolean, tot
     )
 }
 
+@CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
 fun OrderAggregateState.setDelivery(deliveryId: UUID): OrderDeliverySetEvent {
     if (status != OrderStatus.BOOKED && status != OrderStatus.DELIVERY_SET)
         error("Cannot set delivery for order ${getId()}, status is $status")
@@ -61,6 +71,7 @@ fun OrderAggregateState.setDelivery(deliveryId: UUID): OrderDeliverySetEvent {
     )
 }
 
+@CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
 fun OrderAggregateState.setPaymentResults(
     paymentId: UUID,
     success: Boolean,
@@ -85,8 +96,10 @@ fun OrderAggregateState.setPaymentResults(
     }
 }
 
+@CircuitBreaker(name = "confirmPayment2", fallbackMethod = "pendingAuthorizedPaymentIntegration")
 fun OrderAggregateState.startPayment(): OrderPaymentStartedEvent {
     return when (this.status) {
+
         OrderStatus.BOOKED, OrderStatus.DELIVERY_SET, OrderStatus.PAYMENT_FAILED -> {
             if (bookingId != null) {
                 OrderPaymentStartedEvent(
@@ -100,4 +113,8 @@ fun OrderAggregateState.startPayment(): OrderPaymentStartedEvent {
         }
         else -> error("Order is in status ${this.status}, cannot start payment")
     }
+}
+
+fun pendingAuthorizedPaymentIntegration(id: Long, throwable: Throwable) {
+    println("ahaahahah")
 }
